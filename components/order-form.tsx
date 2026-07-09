@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import type {
+  Control,
+  FieldErrors,
+  UseFormRegister,
+  UseFormSetValue,
+} from "react-hook-form";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, CheckCircle2, FileDown, Plus, Trash2 } from "lucide-react";
@@ -31,15 +37,22 @@ import { resolveOrderPricing } from "@/lib/pricing";
 import { formatRupiah } from "@/utils/currency";
 import { downloadBlob } from "@/utils/download";
 
-const emptyItem = { jenisPakan: "", jumlahSak: 1 };
+const emptyFeed = {
+  jenisPakan: "",
+  jumlahSak: 1,
+};
+
+const emptyManufacturer = {
+  pabrikan: undefined as unknown as OrderFormValues["manufacturers"][number]["pabrikan"],
+  feeds: [emptyFeed],
+};
 
 const defaultValues: OrderFormValues = {
   nomorPo: "",
   wilayah: undefined as unknown as OrderFormValues["wilayah"],
   namaPeternak: "",
   tanggalOrder: "",
-  pabrikan: undefined as unknown as OrderFormValues["pabrikan"],
-  items: [emptyItem],
+  manufacturers: [emptyManufacturer],
   tanggalTerima: "",
   namaPemohon: "",
   tandaTanganPemohon: "",
@@ -66,7 +79,6 @@ export function OrderForm() {
   const [signatureResetKey, setSignatureResetKey] = useState(0);
   const [formResetKey, setFormResetKey] = useState(0);
   const [currentPo, setCurrentPo] = useState("");
-  const hasSelectedManufacturerOnce = useRef(false);
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderSchema),
     defaultValues,
@@ -83,40 +95,45 @@ export function OrderForm() {
     watch,
   } = form;
 
-  const { fields, append, remove, replace } = useFieldArray({
+  const {
+    fields: manufacturerFields,
+    append: appendManufacturer,
+    remove: removeManufacturer,
+    replace: replaceManufacturers,
+  } = useFieldArray({
     control,
-    name: "items",
+    name: "manufacturers",
   });
 
-  const selectedManufacturerCode = watch("pabrikan");
-  const watchedItems = watch("items") ?? [];
+  const watchedManufacturers = watch("manufacturers") ?? [];
+  const itemSummaries = watchedManufacturers.flatMap((manufacturerGroup, manufacturerIndex) =>
+    (manufacturerGroup?.feeds ?? []).map((feedItem, feedIndex) => {
+      const pricing = resolveOrderPricing(
+        manufacturerGroup?.pabrikan,
+        feedItem?.jenisPakan,
+        Number(feedItem?.jumlahSak) || 0,
+      );
 
-  const selectedManufacturer = useMemo(
-    () => feedData.find((manufacturer) => manufacturer.code === selectedManufacturerCode),
-    [selectedManufacturerCode],
+      return {
+        key: `${manufacturerIndex}-${feedIndex}`,
+        manufacturerName: pricing.manufacturer?.name ?? "-",
+        warning: pricing.manufacturer?.warning,
+        isUnavailable: manufacturerGroup?.pabrikan === "cp",
+        feedName: pricing.feed?.name ?? "-",
+        quantity: Number(feedItem?.jumlahSak) || 0,
+        total: pricing.total,
+        hasFeed: Boolean(pricing.feed),
+      };
+    }),
   );
-
-  const itemSummaries = watchedItems.map((item) => {
-    const pricing = resolveOrderPricing(
-      selectedManufacturerCode,
-      item?.jenisPakan,
-      Number(item?.jumlahSak) || 0,
-    );
-
-    return {
-      feedName: pricing.feed?.name ?? "-",
-      pricePerKg: pricing.pricePerKg,
-      pricePerSack: pricing.pricePerSack,
-      quantity: Number(item?.jumlahSak) || 0,
-      total: pricing.total,
-      hasFeed: Boolean(pricing.feed),
-    };
-  });
 
   const totalSacks = itemSummaries.reduce((sum, item) => sum + item.quantity, 0);
   const grandTotal = itemSummaries.reduce((sum, item) => sum + item.total, 0);
-  const isCpUnavailable = selectedManufacturerCode === "cp";
-  const canSubmit = !isSubmitting && !isCpUnavailable && Boolean(currentPo);
+  const warningMessages = Array.from(
+    new Set(itemSummaries.map((item) => item.warning).filter(Boolean)),
+  );
+  const hasUnavailableItems = itemSummaries.some((item) => item.isUnavailable);
+  const canSubmit = !isSubmitting && !hasUnavailableItems && Boolean(currentPo);
 
   useEffect(() => {
     const poNumber = generatePoNumber();
@@ -124,29 +141,15 @@ export function OrderForm() {
     setValue("nomorPo", poNumber, { shouldValidate: true });
   }, [setValue]);
 
-  useEffect(() => {
-    if (!hasSelectedManufacturerOnce.current) {
-      hasSelectedManufacturerOnce.current = true;
-      return;
-    }
-
-    replace([emptyItem]);
-  }, [replace, selectedManufacturerCode]);
-
   function resetFormWithNewPo() {
     const poNumber = generatePoNumber();
     setCurrentPo(poNumber);
-    hasSelectedManufacturerOnce.current = false;
-    reset({ ...defaultValues, nomorPo: poNumber, items: [emptyItem] });
+    reset({ ...defaultValues, nomorPo: poNumber, manufacturers: [emptyManufacturer] });
     setValue("wilayah", undefined as unknown as OrderFormValues["wilayah"], {
       shouldDirty: false,
       shouldValidate: false,
     });
-    setValue("pabrikan", undefined as unknown as OrderFormValues["pabrikan"], {
-      shouldDirty: false,
-      shouldValidate: false,
-    });
-    replace([emptyItem]);
+    replaceManufacturers([emptyManufacturer]);
     setFormResetKey((value) => value + 1);
     setSignatureResetKey((value) => value + 1);
   }
@@ -248,31 +251,6 @@ export function OrderForm() {
                 <Input id="tanggalOrder" type="date" {...register("tanggalOrder")} />
               </FormField>
 
-              <Controller
-                control={control}
-                name="pabrikan"
-                render={({ field }) => (
-                  <FormField label="Nama Pabrikan" error={errors.pabrikan?.message}>
-                    <Select
-                      key={`pabrikan-${formResetKey}`}
-                      onValueChange={field.onChange}
-                      value={field.value ?? ""}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Pilih pabrikan" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {feedData.map((manufacturer) => (
-                          <SelectItem key={manufacturer.code} value={manufacturer.code}>
-                            {manufacturer.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormField>
-                )}
-              />
-
               <FormField
                 label="Tanggal Terima"
                 htmlFor="tanggalTerima"
@@ -287,90 +265,39 @@ export function OrderForm() {
                 <div>
                   <h3 className="font-semibold text-slate-900">Rincian Pakan</h3>
                   <p className="text-sm text-muted-foreground">
-                    Tambahkan lebih dari satu jenis pakan dalam PO yang sama.
+                    Satu pabrikan bisa berisi beberapa jenis pakan. Tambah pabrikan lain bila perlu.
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => append(emptyItem)}
-                  disabled={!selectedManufacturer || isCpUnavailable}
+                  onClick={() => appendManufacturer(emptyManufacturer)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Add More
+                  Add More Pabrikan
                 </Button>
               </div>
 
-              {fields.map((field, index) => (
-                <div key={field.id} className="grid gap-4 rounded-md bg-white p-4 sm:grid-cols-[1fr_160px_auto]">
-                  <Controller
-                    control={control}
-                    name={`items.${index}.jenisPakan`}
-                    render={({ field: itemField }) => (
-                      <FormField
-                        label={`Jenis Pakan ${index + 1}`}
-                        error={errors.items?.[index]?.jenisPakan?.message}
-                      >
-                        <Select
-                          key={`item-${formResetKey}-${field.id}`}
-                          disabled={!selectedManufacturer || isCpUnavailable}
-                          onValueChange={itemField.onChange}
-                          value={itemField.value ?? ""}
-                        >
-                          <SelectTrigger>
-                            <SelectValue
-                              placeholder={
-                                isCpUnavailable
-                                  ? "Harga belum tersedia"
-                                  : selectedManufacturer
-                                    ? "Pilih jenis pakan"
-                                    : "Pilih pabrikan dahulu"
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {selectedManufacturer?.feeds.map((feed) => (
-                              <SelectItem key={feed.code} value={feed.code}>
-                                {feed.name} - {formatRupiah(getPricePerSack(feed))}/sak
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </FormField>
-                    )}
-                  />
-
-                  <FormField
-                    label="Jumlah (sak)"
-                    htmlFor={`jumlahSak-${index}`}
-                    error={errors.items?.[index]?.jumlahSak?.message}
-                  >
-                    <Input
-                      id={`jumlahSak-${index}`}
-                      type="number"
-                      min={1}
-                      step={1}
-                      {...register(`items.${index}.jumlahSak`)}
-                    />
-                  </FormField>
-
-                  <div className="flex items-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full sm:w-auto"
-                      onClick={() => remove(index)}
-                      disabled={fields.length === 1}
-                      aria-label={`Hapus item pakan ${index + 1}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+              {manufacturerFields.map((field, index) => (
+                <ManufacturerGroup
+                  key={field.id}
+                  control={control}
+                  errors={errors}
+                  formResetKey={formResetKey}
+                  groupId={field.id}
+                  groupIndex={index}
+                  register={register}
+                  removeGroup={() => removeManufacturer(index)}
+                  setValue={setValue}
+                  showRemoveGroup={manufacturerFields.length > 1}
+                  watchedGroup={watchedManufacturers[index]}
+                />
               ))}
 
-              {errors.items?.root?.message ? (
-                <p className="text-sm font-medium text-destructive">{errors.items.root.message}</p>
+              {errors.manufacturers?.root?.message ? (
+                <p className="text-sm font-medium text-destructive">
+                  {errors.manufacturers.root.message}
+                </p>
               ) : null}
             </div>
 
@@ -378,7 +305,7 @@ export function OrderForm() {
               <Input
                 id="totalHarga"
                 readOnly
-                value={isCpUnavailable ? "Harga belum tersedia" : formatRupiah(grandTotal)}
+                value={hasUnavailableItems ? "Harga belum tersedia" : formatRupiah(grandTotal)}
                 className="font-semibold text-primary"
               />
             </FormField>
@@ -395,16 +322,19 @@ export function OrderForm() {
               />
             </FormField>
 
-            {selectedManufacturer?.warning ? (
-              <div className="flex gap-3 rounded-md border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-900">
+            {warningMessages.map((warning) => (
+              <div
+                key={warning}
+                className="flex gap-3 rounded-md border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-900"
+              >
                 <AlertTriangle className="mt-0.5 h-5 w-5 flex-none" />
-                <p>{selectedManufacturer.warning}</p>
+                <p>{warning}</p>
               </div>
-            ) : null}
+            ))}
 
-            {isCpUnavailable ? (
+            {hasUnavailableItems ? (
               <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm font-medium text-slate-700">
-                Harga belum tersedia.
+                Harga CP belum tersedia.
               </div>
             ) : null}
 
@@ -442,12 +372,11 @@ export function OrderForm() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <SummaryRow label="Nomor PO" value={currentPo || "-"} />
-            <SummaryRow label="Pabrikan" value={selectedManufacturer?.name ?? "-"} />
             {itemSummaries.map((item, index) => (
               <SummaryRow
-                key={`${index}-${item.feedName}`}
+                key={item.key}
                 label={`Item ${index + 1}`}
-                value={`${item.feedName} • ${item.quantity} sak • ${
+                value={`${item.manufacturerName} / ${item.feedName} • ${item.quantity} sak • ${
                   item.hasFeed ? formatRupiah(item.total) : "-"
                 }`}
               />
@@ -460,6 +389,182 @@ export function OrderForm() {
           </CardContent>
         </Card>
       </aside>
+    </div>
+  );
+}
+
+function ManufacturerGroup({
+  control,
+  errors,
+  formResetKey,
+  groupId,
+  groupIndex,
+  register,
+  removeGroup,
+  setValue,
+  showRemoveGroup,
+  watchedGroup,
+}: {
+  control: Control<OrderFormValues>;
+  errors: FieldErrors<OrderFormValues>;
+  formResetKey: number;
+  groupId: string;
+  groupIndex: number;
+  register: UseFormRegister<OrderFormValues>;
+  removeGroup: () => void;
+  setValue: UseFormSetValue<OrderFormValues>;
+  showRemoveGroup: boolean;
+  watchedGroup?: OrderFormValues["manufacturers"][number];
+}) {
+  const {
+    fields: feedFields,
+    append: appendFeed,
+    remove: removeFeed,
+    replace: replaceFeeds,
+  } = useFieldArray({
+    control,
+    name: `manufacturers.${groupIndex}.feeds`,
+  });
+  const selectedManufacturer = feedData.find(
+    (manufacturer) => manufacturer.code === watchedGroup?.pabrikan,
+  );
+  const isCpUnavailable = watchedGroup?.pabrikan === "cp";
+
+  return (
+    <div className="space-y-4 rounded-md bg-white p-4 shadow-sm">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <Controller
+          control={control}
+          name={`manufacturers.${groupIndex}.pabrikan`}
+          render={({ field }) => (
+            <FormField
+              label={`Pabrikan ${groupIndex + 1}`}
+              error={errors.manufacturers?.[groupIndex]?.pabrikan?.message}
+            >
+              <Select
+                key={`manufacturer-${formResetKey}-${groupId}`}
+                onValueChange={(value) => {
+                  field.onChange(value);
+                  replaceFeeds([emptyFeed]);
+                }}
+                value={field.value ?? ""}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Pilih pabrikan" />
+                </SelectTrigger>
+                <SelectContent>
+                  {feedData.map((manufacturer) => (
+                    <SelectItem key={manufacturer.code} value={manufacturer.code}>
+                      {manufacturer.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          )}
+        />
+
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => appendFeed(emptyFeed)}
+            disabled={!selectedManufacturer || isCpUnavailable}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Tambah Jenis
+          </Button>
+          {showRemoveGroup ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={removeGroup}
+              aria-label={`Hapus pabrikan ${groupIndex + 1}`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {feedFields.map((field, feedIndex) => (
+          <div
+            key={field.id}
+            className="grid gap-3 rounded-md border bg-slate-50 p-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]"
+          >
+            <Controller
+              control={control}
+              name={`manufacturers.${groupIndex}.feeds.${feedIndex}.jenisPakan`}
+              render={({ field: feedField }) => (
+                <FormField
+                  label={`Jenis Pakan ${feedIndex + 1}`}
+                  error={
+                    errors.manufacturers?.[groupIndex]?.feeds?.[feedIndex]?.jenisPakan?.message
+                  }
+                >
+                  <Select
+                    key={`feed-${formResetKey}-${groupId}-${field.id}`}
+                    disabled={!selectedManufacturer || isCpUnavailable}
+                    onValueChange={feedField.onChange}
+                    value={feedField.value ?? ""}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          isCpUnavailable
+                            ? "Harga belum tersedia"
+                            : selectedManufacturer
+                              ? "Pilih jenis pakan"
+                              : "Pilih pabrikan dahulu"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedManufacturer?.feeds.map((feed) => (
+                        <SelectItem key={feed.code} value={feed.code}>
+                          {feed.name} - {formatRupiah(getPricePerSack(feed))}/sak
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+              )}
+            />
+
+            <FormField
+              label="Jumlah (sak)"
+              htmlFor={`jumlahSak-${groupIndex}-${feedIndex}`}
+              error={errors.manufacturers?.[groupIndex]?.feeds?.[feedIndex]?.jumlahSak?.message}
+            >
+              <Input
+                id={`jumlahSak-${groupIndex}-${feedIndex}`}
+                type="number"
+                min={1}
+                step={1}
+                {...register(`manufacturers.${groupIndex}.feeds.${feedIndex}.jumlahSak`)}
+              />
+            </FormField>
+
+            <div className="flex items-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => removeFeed(feedIndex)}
+                disabled={feedFields.length === 1}
+                aria-label={`Hapus jenis pakan ${feedIndex + 1}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {isCpUnavailable ? (
+        <p className="text-sm font-medium text-muted-foreground">Harga belum tersedia.</p>
+      ) : null}
     </div>
   );
 }

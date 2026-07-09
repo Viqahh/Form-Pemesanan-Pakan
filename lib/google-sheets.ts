@@ -263,7 +263,7 @@ export async function appendOrderToSheet(order: CompletedOrder) {
     order.wilayah,
     order.namaPeternak,
     order.tanggalOrder,
-    order.pabrikanName,
+    item.pabrikanName,
     item.itemNumber,
     item.jenisPakanName,
     item.hargaPerKg,

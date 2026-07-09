@@ -23,23 +23,33 @@ export async function POST(request: Request) {
     }
 
     const values = parsed.data;
-    const orderItems = values.items.map((item, index) => {
-      const pricing = resolveOrderPricing(values.pabrikan, item.jenisPakan, item.jumlahSak);
+    let itemNumber = 0;
+    const orderItems = values.manufacturers.flatMap((manufacturerGroup) =>
+      manufacturerGroup.feeds.map((item) => {
+        itemNumber += 1;
+        const pricing = resolveOrderPricing(
+          manufacturerGroup.pabrikan,
+          item.jenisPakan,
+          item.jumlahSak,
+        );
 
-      if (!pricing.manufacturer || !pricing.feed) {
-        return null;
-      }
+        if (!pricing.manufacturer || !pricing.feed) {
+          return null;
+        }
 
-      return {
-        itemNumber: index + 1,
-        jenisPakanCode: pricing.feed.code,
-        jenisPakanName: pricing.feed.name,
-        hargaPerKg: pricing.pricePerKg,
-        hargaPerSak: pricing.pricePerSack,
-        jumlahSak: item.jumlahSak,
-        totalHarga: pricing.total,
-      };
-    });
+        return {
+          itemNumber,
+          pabrikanCode: pricing.manufacturer.code,
+          pabrikanName: pricing.manufacturer.name,
+          jenisPakanCode: pricing.feed.code,
+          jenisPakanName: pricing.feed.name,
+          hargaPerKg: pricing.pricePerKg,
+          hargaPerSak: pricing.pricePerSack,
+          jumlahSak: item.jumlahSak,
+          totalHarga: pricing.total,
+        };
+      }),
+    );
 
     if (orderItems.some((item) => item === null)) {
       return NextResponse.json(
@@ -49,12 +59,10 @@ export async function POST(request: Request) {
     }
 
     const resolvedItems = orderItems.filter((item) => item !== null);
-    const firstPricing = resolveOrderPricing(values.pabrikan, values.items[0]?.jenisPakan, 1);
     const order: CompletedOrder = {
       ...values,
       timestamp: new Date().toISOString(),
       wilayah: values.wilayah,
-      pabrikanName: firstPricing.manufacturer?.name ?? values.pabrikan,
       items: resolvedItems,
       totalJumlahSak: resolvedItems.reduce((sum, item) => sum + item.jumlahSak, 0),
       totalHarga: resolvedItems.reduce((sum, item) => sum + item.totalHarga, 0),

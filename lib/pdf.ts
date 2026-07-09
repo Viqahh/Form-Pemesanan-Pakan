@@ -50,7 +50,6 @@ export async function generateOrderPdf(order: CompletedOrder) {
     ["Wilayah", order.wilayah],
     ["Nama Peternak", order.namaPeternak],
     ["Tanggal Order", formatDateId(order.tanggalOrder)],
-    ["Pabrikan", order.pabrikanName],
     ["Tanggal Terima", formatDateId(order.tanggalTerima)],
   ];
 
@@ -92,11 +91,12 @@ export async function generateOrderPdf(order: CompletedOrder) {
   const tableX = margin;
   const columns = [
     { label: "No", x: tableX, width: 28 },
-    { label: "Jenis", x: tableX + 32, width: 112 },
-    { label: "Harga/Kg", x: tableX + 150, width: 78 },
-    { label: "Harga/Sak", x: tableX + 232, width: 86 },
-    { label: "Sak", x: tableX + 322, width: 44 },
-    { label: "Total", x: tableX + 370, width: 112 },
+    { label: "Pabrikan", x: tableX + 32, width: 74 },
+    { label: "Jenis", x: tableX + 112, width: 86 },
+    { label: "Harga/Kg", x: tableX + 204, width: 72 },
+    { label: "Harga/Sak", x: tableX + 282, width: 78 },
+    { label: "Sak", x: tableX + 366, width: 36 },
+    { label: "Total", x: tableX + 410, width: 82 },
   ];
 
   page.drawRectangle({
@@ -119,12 +119,13 @@ export async function generateOrderPdf(order: CompletedOrder) {
 
   y -= 24;
   for (const item of order.items) {
-    page.drawText(String(item.itemNumber), { x: columns[0].x, y, size: 9, font });
-    page.drawText(item.jenisPakanName, { x: columns[1].x, y, size: 9, font });
-    page.drawText(formatRupiah(item.hargaPerKg), { x: columns[2].x, y, size: 9, font });
-    page.drawText(formatRupiah(item.hargaPerSak), { x: columns[3].x, y, size: 9, font });
-    page.drawText(`${item.jumlahSak}`, { x: columns[4].x, y, size: 9, font });
-    page.drawText(formatRupiah(item.totalHarga), { x: columns[5].x, y, size: 9, font });
+    page.drawText(String(item.itemNumber), { x: columns[0].x, y, size: 8.5, font });
+    page.drawText(item.pabrikanName, { x: columns[1].x, y, size: 8.5, font });
+    page.drawText(item.jenisPakanName, { x: columns[2].x, y, size: 8.5, font });
+    page.drawText(formatRupiah(item.hargaPerKg), { x: columns[3].x, y, size: 8.5, font });
+    page.drawText(formatRupiah(item.hargaPerSak), { x: columns[4].x, y, size: 8.5, font });
+    page.drawText(`${item.jumlahSak}`, { x: columns[5].x, y, size: 8.5, font });
+    page.drawText(formatRupiah(item.totalHarga), { x: columns[6].x, y, size: 8.5, font });
     y -= 20;
   }
 

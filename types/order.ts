@@ -1,10 +1,9 @@
 import type { OrderFormValues } from "@/lib/order-schema";
 
-export type CompletedOrder = Omit<OrderFormValues, "items"> & {
+export type CompletedOrder = Omit<OrderFormValues, "manufacturers"> & {
   nomorPo: string;
   timestamp: string;
   wilayah: string;
-  pabrikanName: string;
   items: CompletedOrderItem[];
   totalJumlahSak: number;
   totalHarga: number;
@@ -12,6 +11,8 @@ export type CompletedOrder = Omit<OrderFormValues, "items"> & {
 
 export type CompletedOrderItem = {
   itemNumber: number;
+  pabrikanCode: string;
+  pabrikanName: string;
   jenisPakanCode: string;
   jenisPakanName: string;
   hargaPerKg: number;
