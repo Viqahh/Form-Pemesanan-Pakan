@@ -129,6 +129,18 @@ export function OrderForm() {
 
   const totalSacks = itemSummaries.reduce((sum, item) => sum + item.quantity, 0);
   const grandTotal = itemSummaries.reduce((sum, item) => sum + item.total, 0);
+  const manufacturerSummaries = feedData.map((manufacturer) => {
+    const items = itemSummaries.filter((item) => item.manufacturerName === manufacturer.name);
+    const isUnavailable = items.some((item) => item.isUnavailable);
+
+    return {
+      code: manufacturer.code,
+      name: manufacturer.name,
+      sacks: items.reduce((sum, item) => sum + item.quantity, 0),
+      total: items.reduce((sum, item) => sum + item.total, 0),
+      isUnavailable,
+    };
+  });
   const warningMessages = Array.from(
     new Set(itemSummaries.map((item) => item.warning).filter(Boolean)),
   );
@@ -252,11 +264,14 @@ export function OrderForm() {
               </FormField>
 
               <FormField
-                label="Tanggal Terima"
+                label="Tanggal Terima (Opsional)"
                 htmlFor="tanggalTerima"
                 error={errors.tanggalTerima?.message}
               >
                 <Input id="tanggalTerima" type="date" {...register("tanggalTerima")} />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Barang akan diterima dalam 1-10 hari. Jika belum pasti, boleh dikosongkan.
+                </p>
               </FormField>
             </div>
 
@@ -372,14 +387,18 @@ export function OrderForm() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             <SummaryRow label="Nomor PO" value={currentPo || "-"} />
-            {itemSummaries.map((item, index) => (
-              <SummaryRow
-                key={item.key}
-                label={`Item ${index + 1}`}
-                value={`${item.manufacturerName} / ${item.feedName} • ${item.quantity} sak • ${
-                  item.hasFeed ? formatRupiah(item.total) : "-"
-                }`}
-              />
+            {manufacturerSummaries.map((manufacturer) => (
+              <div key={manufacturer.code} className="rounded-md border p-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-slate-900">{manufacturer.name}</p>
+                    <p className="mt-1 text-muted-foreground">{manufacturer.sacks} sak</p>
+                  </div>
+                  <p className="text-right font-semibold text-slate-900">
+                    {manufacturer.isUnavailable ? "Harga belum tersedia" : formatRupiah(manufacturer.total)}
+                  </p>
+                </div>
+              </div>
             ))}
             <SummaryRow label="Total Sak" value={`${totalSacks} sak`} />
             <div className="rounded-md bg-secondary p-4">

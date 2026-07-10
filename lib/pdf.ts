@@ -50,7 +50,7 @@ export async function generateOrderPdf(order: CompletedOrder) {
     ["Wilayah", order.wilayah],
     ["Nama Peternak", order.namaPeternak],
     ["Tanggal Order", formatDateId(order.tanggalOrder)],
-    ["Tanggal Terima", formatDateId(order.tanggalTerima)],
+    ["Tanggal Terima", formatDateId(order.tanggalTerima ?? "")],
   ];
 
   for (const [label, value] of rows) {
@@ -129,14 +129,65 @@ export async function generateOrderPdf(order: CompletedOrder) {
     y -= 20;
   }
 
-  y -= 8;
-  page.drawText(`Total Jumlah: ${order.totalJumlahSak} sak`, {
+  const manufacturerSummaries = Array.from(
+    order.items
+      .reduce((summaryMap, item) => {
+        const current = summaryMap.get(item.pabrikanName) ?? {
+          jumlahSak: 0,
+          totalHarga: 0,
+        };
+
+        summaryMap.set(item.pabrikanName, {
+          jumlahSak: current.jumlahSak + item.jumlahSak,
+          totalHarga: current.totalHarga + item.totalHarga,
+        });
+
+        return summaryMap;
+      }, new Map<string, { jumlahSak: number; totalHarga: number }>())
+      .entries(),
+  );
+
+  y -= 10;
+  page.drawText("Subtotal Pabrikan", {
+    x: margin,
+    y,
+    size: 10,
+    font: boldFont,
+  });
+  y -= 18;
+
+  for (const [manufacturerName, summary] of manufacturerSummaries) {
+    page.drawText(`${manufacturerName}: ${summary.jumlahSak} sak`, {
+      x: margin,
+      y,
+      size: 10,
+      font,
+    });
+    page.drawText(formatRupiah(summary.totalHarga), {
+      x: margin + 250,
+      y,
+      size: 10,
+      font: boldFont,
+      color: rgb(0.08, 0.45, 0.32),
+    });
+    y -= 18;
+  }
+
+  y -= 4;
+  page.drawLine({
+    start: { x: margin, y: y + 8 },
+    end: { x: width - margin, y: y + 8 },
+    thickness: 0.8,
+    color: rgb(0.8, 0.84, 0.88),
+  });
+
+  page.drawText(`Total Semua: ${order.totalJumlahSak} sak`, {
     x: margin,
     y,
     size: 11,
     font: boldFont,
   });
-  page.drawText(`Total Harga: ${formatRupiah(order.totalHarga)}`, {
+  page.drawText(formatRupiah(order.totalHarga), {
     x: margin + 250,
     y,
     size: 11,

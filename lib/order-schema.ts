@@ -35,7 +35,7 @@ export const orderSchema = z
         }),
       )
       .min(1, "Minimal satu pabrikan wajib ditambahkan."),
-    tanggalTerima: z.string().trim().min(1, "Tanggal terima wajib dipilih."),
+    tanggalTerima: z.string().trim().optional(),
     namaPemohon: z.string().trim().min(1, "Nama pemohon wajib diisi."),
     tandaTanganPemohon: z.string().trim().min(1, "Tanda tangan pemohon wajib diisi."),
   })

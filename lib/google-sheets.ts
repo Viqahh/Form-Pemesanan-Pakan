@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import type { sheets_v4 } from "googleapis";
+import { feedData } from "@/data/feedData";
 import type { CompletedOrder } from "@/types/order";
 
 const ORDER_HEADERS = [
@@ -14,13 +15,19 @@ const ORDER_HEADERS = [
   "Harga per Kg",
   "Harga per Sak",
   "Jumlah Sak",
-  "Total Item",
+  "Total Harga",
   "Total PO",
   "Tanggal Terima",
   "Nama Pemohon",
 ];
 
 const AREA_INDEX_HEADERS = ["Wilayah", "Spreadsheet ID", "Spreadsheet URL", "Created At"];
+
+const MANUFACTURER_TAB_NAMES: Record<string, string> = {
+  malindo: "PO Pakan Malindo",
+  "new-hope": "PO Pakan Newhope",
+  cp: "PO Pakan CP",
+};
 
 function getRequiredEnv(name: string) {
   const value = process.env[name];
@@ -88,6 +95,10 @@ function parseUpdatedRows(updatedRange?: string | null) {
     startRow: Number(match[1]),
     endRow: Number(match[2]),
   };
+}
+
+function getManufacturerTabName(manufacturerCode: string) {
+  return MANUFACTURER_TAB_NAMES[manufacturerCode] ?? `PO Pakan ${manufacturerCode}`;
 }
 
 async function ensureSheetExists(
@@ -245,7 +256,6 @@ async function getAreaSpreadsheet(
 export async function appendOrderToSheet(order: CompletedOrder) {
   const masterSpreadsheetId = getRequiredEnv("GOOGLE_SHEETS_MASTER_SPREADSHEET_ID");
   const indexTabName = process.env.GOOGLE_SHEETS_INDEX_TAB_NAME || "Area Links";
-  const orderTabName = process.env.GOOGLE_SHEETS_TAB_NAME || "Orders";
   const { sheets } = getGoogleClients();
 
   const areaSpreadsheetId = await getAreaSpreadsheet(
@@ -255,68 +265,87 @@ export async function appendOrderToSheet(order: CompletedOrder) {
     indexTabName,
   );
 
-  const sheetId = await ensureHeaderRow(sheets, areaSpreadsheetId, orderTabName, ORDER_HEADERS);
+  const sheetIdsByTab = new Map<string, number>();
+  for (const manufacturer of feedData) {
+    const tabName = getManufacturerTabName(manufacturer.code);
+    const sheetId = await ensureHeaderRow(sheets, areaSpreadsheetId, tabName, ORDER_HEADERS);
+    sheetIdsByTab.set(tabName, sheetId);
+  }
 
-  const rows = order.items.map((item) => [
-    order.nomorPo,
-    order.timestamp,
-    order.wilayah,
-    order.namaPeternak,
-    order.tanggalOrder,
-    item.pabrikanName,
-    item.itemNumber,
-    item.jenisPakanName,
-    item.hargaPerKg,
-    item.hargaPerSak,
-    item.jumlahSak,
-    item.totalHarga,
-    order.totalHarga,
-    order.tanggalTerima,
-    order.namaPemohon,
-  ]);
+  const itemsByManufacturer = new Map<string, typeof order.items>();
+  for (const item of order.items) {
+    const existingItems = itemsByManufacturer.get(item.pabrikanCode) ?? [];
+    existingItems.push(item);
+    itemsByManufacturer.set(item.pabrikanCode, existingItems);
+  }
 
-  const appendResult = await withGoogleStep(
-    `Tidak bisa menulis order ke spreadsheet wilayah ${order.wilayah}`,
-    () =>
-      sheets.spreadsheets.values.append({
-        spreadsheetId: areaSpreadsheetId,
-        range: range(orderTabName, "A:O"),
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: rows,
-        },
-      }),
-  );
+  for (const [manufacturerCode, items] of itemsByManufacturer.entries()) {
+    const tabName = getManufacturerTabName(manufacturerCode);
+    const sheetId = sheetIdsByTab.get(tabName);
+    if (typeof sheetId !== "number") continue;
 
-  const updatedRows = parseUpdatedRows(appendResult.data.updates?.updatedRange);
-  if (!updatedRows) return;
+    const manufacturerTotal = items.reduce((sum, item) => sum + item.totalHarga, 0);
+    const rows = items.map((item) => [
+      order.nomorPo,
+      order.timestamp,
+      order.wilayah,
+      order.namaPeternak,
+      order.tanggalOrder,
+      item.pabrikanName,
+      item.itemNumber,
+      item.jenisPakanName,
+      item.hargaPerKg,
+      item.hargaPerSak,
+      item.jumlahSak,
+      item.totalHarga,
+      manufacturerTotal,
+      order.tanggalTerima ?? "",
+      order.namaPemohon,
+    ]);
 
-  await withGoogleStep(
-    `Tidak bisa memberi warna row untuk ${order.nomorPo}`,
-    () =>
-      sheets.spreadsheets.batchUpdate({
-        spreadsheetId: areaSpreadsheetId,
-        requestBody: {
-          requests: [
-            {
-              repeatCell: {
-                range: {
-                  sheetId,
-                  startRowIndex: updatedRows.startRow - 1,
-                  endRowIndex: updatedRows.endRow,
-                  startColumnIndex: 0,
-                  endColumnIndex: ORDER_HEADERS.length,
-                },
-                cell: {
-                  userEnteredFormat: {
-                    backgroundColor: getPoColor(updatedRows.startRow),
+    const appendResult = await withGoogleStep(
+      `Tidak bisa menulis order ke tab ${tabName} wilayah ${order.wilayah}`,
+      () =>
+        sheets.spreadsheets.values.append({
+          spreadsheetId: areaSpreadsheetId,
+          range: range(tabName, "A:O"),
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: rows,
+          },
+        }),
+    );
+
+    const updatedRows = parseUpdatedRows(appendResult.data.updates?.updatedRange);
+    if (!updatedRows) continue;
+
+    await withGoogleStep(
+      `Tidak bisa memberi warna row untuk ${order.nomorPo} di tab ${tabName}`,
+      () =>
+        sheets.spreadsheets.batchUpdate({
+          spreadsheetId: areaSpreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                repeatCell: {
+                  range: {
+                    sheetId,
+                    startRowIndex: updatedRows.startRow - 1,
+                    endRowIndex: updatedRows.endRow,
+                    startColumnIndex: 0,
+                    endColumnIndex: ORDER_HEADERS.length,
                   },
+                  cell: {
+                    userEnteredFormat: {
+                      backgroundColor: getPoColor(updatedRows.startRow),
+                    },
+                  },
+                  fields: "userEnteredFormat.backgroundColor",
                 },
-                fields: "userEnteredFormat.backgroundColor",
               },
-            },
-          ],
-        },
-      }),
-  );
+            ],
+          },
+        }),
+    );
+  }
 }
